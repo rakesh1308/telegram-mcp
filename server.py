@@ -263,7 +263,28 @@ async def get_updates(
 
 
 def main() -> None:
-    mcp.run()
+    """Run the MCP server.
+
+    Transport selection:
+      * If the ``PORT`` environment variable is set (typical on PaaS platforms
+        like Zeabur, Railway, Render, Heroku, Fly.io), run ``streamable-http``
+        bound to ``0.0.0.0:$PORT`` so the platform's HTTP health check passes.
+      * Otherwise fall back to stdio transport for local MCP clients
+        (Kilo, Claude Desktop, etc.).
+    """
+    paas_port = os.getenv("PORT")
+    if paas_port:
+        try:
+            port = int(paas_port)
+        except ValueError:
+            raise RuntimeError(f"PORT env var is not an integer: {paas_port!r}")
+        mcp.settings.host = "0.0.0.0"
+        mcp.settings.port = port
+        logger.info("Starting Telegram MCP server (streamable-http) on 0.0.0.0:%d", port)
+        mcp.run(transport="streamable-http")
+    else:
+        logger.info("Starting Telegram MCP server (stdio) for local MCP client")
+        mcp.run()
 
 
 if __name__ == "__main__":

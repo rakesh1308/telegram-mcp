@@ -42,10 +42,11 @@ as MCP tools (e.g. `send_message`, `send_photo`, `get_updates`).
 python server.py
 ```
 
-The server speaks MCP over stdio. Configure your MCP client (Kilo, Claude Desktop,
-etc.) to launch it via stdio.
+By default the server speaks MCP over **stdio** (for local clients). If the
+`PORT` environment variable is set, it switches to **streamable-http** on
+`0.0.0.0:$PORT` so it works on PaaS platforms.
 
-### Example MCP client config
+### Example MCP client config (local stdio)
 
 ```json
 {
@@ -61,6 +62,39 @@ etc.) to launch it via stdio.
   }
 }
 ```
+
+### Example MCP client config (remote HTTP)
+
+```json
+{
+  "mcpServers": {
+    "telegram": {
+      "url": "https://your-deployment.example.com/mcp",
+      "transport": "streamable-http"
+    }
+  }
+}
+```
+
+## Deploy
+
+The repo includes a `Procfile` and a `Dockerfile`. `server.py` auto-switches to
+`streamable-http` when `PORT` is set, so no code changes are needed per
+platform.
+
+### Zeabur
+
+1. Push the repo (already done) and connect it in Zeabur's dashboard.
+2. Zeabur sets `PORT` automatically; no extra config is required if you ship
+   a `Procfile` (`web: python server.py`) or a `Dockerfile` (both included).
+3. Set `TELEGRAM_BOT_TOKEN` and (optionally) `TELEGRAM_DEFAULT_CHAT_ID` in the
+   service's environment variables.
+4. Hit `https://<your-service>.zeabur.app/mcp` from any MCP HTTP client.
+
+### Railway / Render / Fly.io
+
+Same story — set `PORT`, `TELEGRAM_BOT_TOKEN`, optionally `TELEGRAM_DEFAULT_CHAT_ID`,
+and the included `Procfile` / `Dockerfile` will start the server.
 
 ## Tools
 
