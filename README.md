@@ -31,10 +31,14 @@ as MCP tools (e.g. `send_message`, `send_photo`, `get_updates`).
    ```
    TELEGRAM_BOT_TOKEN=123456:ABC...
    TELEGRAM_DEFAULT_CHAT_ID=123456789
+   MCP_AUTH_TOKEN=<long random string>
    ```
 
    `TELEGRAM_DEFAULT_CHAT_ID` is used when a tool is invoked without an explicit
    `chat_id` argument, so you don't have to repeat it on every call.
+   `MCP_AUTH_TOKEN` is only enforced when running over HTTP (PaaS deployment);
+   it is the bearer token clients like ChatGPT must present in their
+   `Authorization` header. Generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
 
 ## Run
 
@@ -70,11 +74,17 @@ By default the server speaks MCP over **stdio** (for local clients). If the
   "mcpServers": {
     "telegram": {
       "url": "https://your-deployment.example.com/mcp",
-      "transport": "streamable-http"
+      "transport": "streamable-http",
+      "headers": {
+        "Authorization": "Bearer <MCP_AUTH_TOKEN>"
+      }
     }
   }
 }
 ```
+
+For ChatGPT: Settings → Connectors → Add → URL `https://<service>.zeabur.app/mcp`,
+Authentication = `Bearer <MCP_AUTH_TOKEN>`.
 
 ## Deploy
 
@@ -87,9 +97,12 @@ platform.
 1. Push the repo (already done) and connect it in Zeabur's dashboard.
 2. Zeabur sets `PORT` automatically; no extra config is required if you ship
    a `Procfile` (`web: python server.py`) or a `Dockerfile` (both included).
-3. Set `TELEGRAM_BOT_TOKEN` and (optionally) `TELEGRAM_DEFAULT_CHAT_ID` in the
-   service's environment variables.
-4. Hit `https://<your-service>.zeabur.app/mcp` from any MCP HTTP client.
+3. Set these env vars in the service settings:
+   - `TELEGRAM_BOT_TOKEN` (required)
+   - `TELEGRAM_DEFAULT_CHAT_ID` (optional)
+   - `MCP_AUTH_TOKEN` (required — bearer token clients must send)
+4. Hit `https://<your-service>.zeabur.app/mcp` from any MCP HTTP client, with
+   `Authorization: Bearer <MCP_AUTH_TOKEN>`.
 
 ### Railway / Render / Fly.io
 

@@ -6,20 +6,29 @@ variables (typically loaded from a .env file):
     TELEGRAM_BOT_TOKEN        - required, bot token from @BotFather
     TELEGRAM_DEFAULT_CHAT_ID  - optional, used when a tool is called without
                                 an explicit chat_id
+    MCP_AUTH_TOKEN            - required when running over HTTP (PaaS), used as
+                                the bearer token to authenticate MCP clients
+                                such as ChatGPT connectors.
 
 Run with:  python server.py
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+import secrets
 from typing import Any, Optional
 
 import httpx
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 load_dotenv()
 
@@ -68,6 +77,67 @@ def _chat_id(chat_id: Optional[str]) -> str:
 
 
 mcp = FastMCP("telegram")
+
+
+class _BearerAuthMiddleware(BaseHTTPMiddleware):
+    """Starlette middleware that validates ``Authorization: Bearer <token>``.
+
+    OAuth discovery endpoints under ``/.well-known/`` are left open so clients
+    can negotiate authentication.
+    """
+
+    def __init__(self, app: Any, token: str) -> None:
+        super().__init__(app)
+        self._token = token
+
+    async def dispatch(self, request: Request, call_next: Any) -> Any:
+        if request.url.path.startswith("/.well-known/"):
+            return await call_next(request)
+
+        header = request.headers.get("authorization", "")
+        scheme, _, value = header.partition(" ")
+        if scheme.lower() != "bearer" or not secrets.compare_digest(value, self._token):
+            return JSONResponse(
+                {"error": "unauthorized", "error_description": "Invalid or missing bearer token."},
+                status_code=401,
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return await call_next(request)
+
+
+async def _run_http(port: int) -> None:
+    """Serve the MCP server over streamable-http with auth + correct host config."""
+    import uvicorn
+
+    # Bind to all interfaces and disable DNS-rebinding protection, which by
+    # default only allows 127.0.0.1/localhost and rejects PaaS hostnames
+    # (e.g. telegram13.zeabur.app) with HTTP 421.
+    mcp.settings.host = "0.0.0.0"
+    mcp.settings.port = port
+    mcp.settings.stateless_http = True
+    mcp.settings.transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=False,
+    )
+
+    auth_token = os.getenv("MCP_AUTH_TOKEN")
+    if not auth_token:
+        auth_token = secrets.token_urlsafe(32)
+        logger.warning(
+            "MCP_AUTH_TOKEN is not set; generated an ephemeral token for this run. "
+            "Set MCP_AUTH_TOKEN in your environment to a stable value."
+        )
+    logger.info("MCP bearer token (first 8 chars): %s...", auth_token[:8])
+
+    app = mcp.streamable_http_app()
+    app.add_middleware(_BearerAuthMiddleware, token=auth_token)
+
+    config = uvicorn.Config(
+        app,
+        host="0.0.0.0",
+        port=port,
+        log_level=mcp.settings.log_level.lower(),
+    )
+    await uvicorn.Server(config).serve()
 
 
 @mcp.tool()
@@ -269,6 +339,7 @@ def main() -> None:
       * If the ``PORT`` environment variable is set (typical on PaaS platforms
         like Zeabur, Railway, Render, Heroku, Fly.io), run ``streamable-http``
         bound to ``0.0.0.0:$PORT`` so the platform's HTTP health check passes.
+        Bearer-token auth is enforced via the ``MCP_AUTH_TOKEN`` env var.
       * Otherwise fall back to stdio transport for local MCP clients
         (Kilo, Claude Desktop, etc.).
     """
@@ -278,10 +349,7 @@ def main() -> None:
             port = int(paas_port)
         except ValueError:
             raise RuntimeError(f"PORT env var is not an integer: {paas_port!r}")
-        mcp.settings.host = "0.0.0.0"
-        mcp.settings.port = port
-        logger.info("Starting Telegram MCP server (streamable-http) on 0.0.0.0:%d", port)
-        mcp.run(transport="streamable-http")
+        asyncio.run(_run_http(port))
     else:
         logger.info("Starting Telegram MCP server (stdio) for local MCP client")
         mcp.run()
