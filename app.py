@@ -1,11 +1,9 @@
 """Vercel ASGI entry point for the stateless Telegram MCP server."""
-import hmac
 import logging
 import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from starlette.responses import JSONResponse
 from server import mcp
 from mcp.server.transport_security import TransportSecuritySettings
 
@@ -30,21 +28,6 @@ async def lifespan(app):
 
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
-
-
-@app.middleware("http")
-async def require_auth(request, call_next):
-    if request.url.path in ("/", "/health"):
-        return await call_next(request)
-    # Clients use the configured bot token as their bearer credential.
-    token = os.getenv("MCP_AUTH_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
-    supplied = request.headers.get("authorization", "")
-    if not token or not hmac.compare_digest(supplied.encode(), ("Bearer " + token).encode()):
-        return JSONResponse(
-            {"error": "Unauthorized"}, status_code=401,
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return await call_next(request)
 
 
 @app.get("/")
